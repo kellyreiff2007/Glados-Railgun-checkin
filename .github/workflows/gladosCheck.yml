@@ -11,14 +11,15 @@ on:
     - cron: '18 9,12 * * *'
       timezone: 'Asia/Shanghai'
 
+# 安全加固：GITHUB_TOKEN 仅授予 contents: read，不授予任何写权限，
+# 防止被恶意 action 利用读写权限获取或外传 secrets。
+permissions:
+  contents: read
+
 jobs:
   build:
     name: glados/railgun checkin
     runs-on: ubuntu-latest
-      
-    permissions:
-      contents: read
-      actions: write
 
     strategy:
       matrix:
@@ -30,21 +31,22 @@ jobs:
 
     steps:
     - name: Checkout Code
-      uses: actions/checkout@v6
+      # 钉住官方 commit SHA 而非 tag，避免 tag 被移动导致供应链攻击
+      uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
 
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v6
+      uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
       with:
         python-version: ${{ matrix.python-version }}
 
-    # 安装 python 库
+    # 安装 python 库（此步骤未注入任何 secrets 环境变量）
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install requests
         pip install pypushdeer
 
-    # 执行 签到脚本
+    # 执行 签到脚本（secrets 仅注入到本步骤，且只被本地已审阅的 checkin.py 读取）
     - name: Running checkin
       run: |
         python checkin.py
@@ -54,14 +56,14 @@ jobs:
         GLADOS_EXCHANGE_PLAN: ${{ secrets.GLADOS_EXCHANGE_PLAN }}
         GLADOS_VERBOSE: ${{ secrets.GLADOS_VERBOSE }}
 
-    - name: Keep alive
-      uses: liskin/gh-workflow-keepalive@v1 
-        
-    - name: Delete workflow runs
-      uses: Mattraks/delete-workflow-runs@v2
-      with:
-        token: ${{ github.token }}
-        repository: ${{ github.repository }}
-        retain_days: 7
-        keep_minimum_runs: 7
-        delete_run_by_conclusion_pattern: success
+  # 防止 GitHub 因仓库超过 60 天无活动而自动停用排程 workflow。
+  # 独立 job + 仅 schedule 触发，且只授予 actions: write（不做读写 contents，
+  # 不会创建 dummy commit），尽量减少令牌暴露面。
+  workflow-keepalive:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Keep workflow alive
+        uses: liskin/gh-workflow-keepalive@f72ff1a1336129f29bf0166c0fd0ca6cf1bcb38c
